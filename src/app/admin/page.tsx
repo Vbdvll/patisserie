@@ -22,7 +22,9 @@ import {
   Image as ImageIcon,
   Download,
   ToggleLeft,
-  ToggleRight
+  ToggleRight,
+  Trash2,
+  QrCode
 } from 'lucide-react';
 
 const SHOP_ID = process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID || '00000000-0000-0000-0000-000000000001';
@@ -49,8 +51,9 @@ export default function AdminPage() {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string>('');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [appUrl, setAppUrl] = useState<string>('');
 
-  // Formulaire d'ajout
+  // Formulaire d'ajout produit
   const [newTitle, setNewTitle] = useState('');
   const [newPrice, setNewPrice] = useState('');
   const [newCategory, setNewCategory] = useState('');
@@ -66,6 +69,9 @@ export default function AdminPage() {
   const [isSubmittingSale, setIsSubmittingSale] = useState(false);
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setAppUrl(window.location.origin);
+    }
     const savedAuth = sessionStorage.getItem('admin_authenticated');
     if (savedAuth === 'true') {
       setIsAuthenticated(true);
@@ -137,7 +143,6 @@ export default function AdminPage() {
     }
   };
 
-  // Basculer la disponibilité (Rupture de stock)
   const toggleProductAvailability = async (productId: string, currentStatus: boolean) => {
     try {
       const nextStatus = !currentStatus;
@@ -157,15 +162,29 @@ export default function AdminPage() {
     }
   };
 
-  // Exporter les ventes en CSV
+  const handleDeleteProduct = async (productId: string, title: string) => {
+    if (!confirm(`Supprimer définitivement "${title}" du catalogue ?`)) return;
+
+    try {
+      const { error } = await supabase.from('products').delete().eq('id', productId);
+      if (error) throw error;
+
+      setProducts((prev) => prev.filter((p) => p.id !== productId));
+      setPosCart((prev) => prev.filter((item) => item.product_id !== productId));
+      alert('Produit supprimé.');
+    } catch (err) {
+      console.error('Erreur suppression:', err);
+      alert('Erreur lors de la suppression.');
+    }
+  };
+
   const exportSalesToCSV = () => {
     if (salesHistory.length === 0) {
-      alert('Aucune vente enregistrée à exporter.');
+      alert('Aucune vente enregistrée.');
       return;
     }
 
     const headers = ['ID Vente', 'Date', 'Heure', 'Articles', 'Mode Paiement', 'Type Commande', `Montant Total (${shopCurrency})`];
-
     const rows = salesHistory.map((s) => {
       const dateObj = s.created_at ? new Date(s.created_at) : new Date();
       const dateStr = dateObj.toLocaleDateString('fr-FR');
@@ -194,7 +213,6 @@ export default function AdminPage() {
     document.body.removeChild(link);
   };
 
-  // Caisse POS
   const addToPosCart = (product: Product) => {
     setPosCart((prev) => {
       const exists = prev.find((item) => item.product_id === product.id);
@@ -237,7 +255,7 @@ export default function AdminPage() {
       alert('Vente enregistrée avec succès !');
     } catch (err) {
       console.error('Erreur vente:', err);
-      alert('Erreur lors de l\'enregistrement de la vente.');
+      alert('Erreur lors de l\'enregistrement.');
     } finally {
       setIsSubmittingSale(false);
     }
@@ -347,20 +365,20 @@ export default function AdminPage() {
 
       if (error) throw error;
 
-      alert('Paramètres de la boutique mis à jour avec succès !');
+      alert('Paramètres enregistrés !');
       setLogoFile(null);
       setLogoPreview('');
     } catch (err) {
-      console.error('Erreur mise à jour paramètres:', err);
-      alert('Erreur lors de la sauvegarde des paramètres.');
+      console.error('Erreur paramètres:', err);
+      alert('Erreur lors de la sauvegarde.');
     } finally {
       setIsSavingSettings(false);
     }
   };
 
   const totalRevenue = salesHistory.reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(appUrl || 'https://google.com')}&color=14-12-12`;
 
-  // Saisie du PIN
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-[#FAF6F0] flex flex-col justify-center items-center p-4">
@@ -476,7 +494,7 @@ export default function AdminPage() {
               }`}
             >
               <Settings className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Paramètres</span>
+              <span className="hidden sm:inline">Paramètres & QR</span>
             </button>
             <button
               onClick={handleLogout}
@@ -515,7 +533,6 @@ export default function AdminPage() {
               </div>
             </div>
 
-            {/* Historique avec Export CSV */}
             <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                 <div>
@@ -532,7 +549,7 @@ export default function AdminPage() {
                   className="flex items-center gap-1.5 bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold px-3 py-1.5 rounded-xl shadow-sm transition-colors"
                 >
                   <Download className="w-3.5 h-3.5 text-[#E05A2B]" />
-                  Exporter en CSV (Excel)
+                  Exporter CSV (Excel)
                 </button>
               </div>
 
@@ -643,7 +660,7 @@ export default function AdminPage() {
         </main>
       )}
 
-      {/* Onglet 2 : Menu & Rupture de stock */}
+      {/* Onglet 2 : Menu & Rupture + Suppression */}
       {activeTab === 'products' && (
         <main className="max-w-4xl mx-auto px-4 py-6">
           <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm mb-6">
@@ -747,27 +764,27 @@ export default function AdminPage() {
             </form>
           </div>
 
-          {/* Liste des plats avec Toggle Disponibilité */}
+          {/* Liste avec Rupture ET Suppression */}
           <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
             <h3 className="font-bold text-sm text-stone-900 mb-3 flex items-center gap-2">
-              <Package className="w-4 h-4 text-stone-500" /> Gestion des plats & Disponibilité ({products.length})
+              <Package className="w-4 h-4 text-stone-500" /> Plats enregistrés ({products.length})
             </h3>
             <div className="divide-y divide-stone-100">
               {products.map((p) => (
                 <div key={p.id} className="py-3 flex items-center justify-between gap-4 text-xs">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
                     <img
                       src={p.image_url || 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=600&q=80'}
                       alt={p.title}
-                      className="w-11 h-11 rounded-xl object-cover border border-stone-200"
+                      className="w-12 h-12 rounded-xl object-cover border border-stone-200 flex-shrink-0"
                     />
-                    <div>
+                    <div className="truncate">
                       <div className="flex items-center gap-2">
-                        <span className={`font-bold text-sm ${p.is_available ? 'text-stone-900' : 'text-stone-400 line-through'}`}>
+                        <span className={`font-bold text-sm truncate ${p.is_available ? 'text-stone-900' : 'text-stone-400 line-through'}`}>
                           {p.title}
                         </span>
                         {!p.is_available && (
-                          <span className="bg-red-50 text-red-600 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                          <span className="bg-red-50 text-red-600 text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0">
                             Rupture
                           </span>
                         )}
@@ -778,25 +795,36 @@ export default function AdminPage() {
                     </div>
                   </div>
 
-                  {/* Bouton Toggle Disponibilité */}
-                  <button
-                    onClick={() => toggleProductAvailability(p.id, p.is_available)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all ${
-                      p.is_available
-                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
-                        : 'bg-stone-50 border-stone-200 text-stone-500 hover:bg-stone-100'
-                    }`}
-                  >
-                    {p.is_available ? (
-                      <>
-                        <ToggleRight className="w-5 h-5 text-emerald-600" /> En vente
-                      </>
-                    ) : (
-                      <>
-                        <ToggleLeft className="w-5 h-5 text-stone-400" /> Épuisé
-                      </>
-                    )}
-                  </button>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => toggleProductAvailability(p.id, p.is_available)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all ${
+                        p.is_available
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                          : 'bg-stone-50 border-stone-200 text-stone-500 hover:bg-stone-100'
+                      }`}
+                    >
+                      {p.is_available ? (
+                        <>
+                          <ToggleRight className="w-5 h-5 text-emerald-600" />
+                          <span className="hidden sm:inline">En vente</span>
+                        </>
+                      ) : (
+                        <>
+                          <ToggleLeft className="w-5 h-5 text-stone-400" />
+                          <span className="hidden sm:inline">Épuisé</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={() => handleDeleteProduct(p.id, p.title)}
+                      className="p-2 border border-stone-200 hover:border-red-300 rounded-xl text-stone-400 hover:text-red-600 transition-colors"
+                      title="Supprimer ce plat"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -804,12 +832,42 @@ export default function AdminPage() {
         </main>
       )}
 
-      {/* Onglet 3 : Paramètres Boutique */}
+      {/* Onglet 3 : Paramètres & QR Code de Comptoir */}
       {activeTab === 'settings' && (
-        <main className="max-w-2xl mx-auto px-4 py-6">
+        <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+          {/* Bloc QR Code */}
+          <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex flex-col sm:flex-row items-center gap-6">
+            <div className="w-36 h-36 bg-stone-50 border border-stone-200 rounded-2xl p-2 flex items-center justify-center flex-shrink-0">
+              <img src={qrCodeUrl} alt="QR Code boutique" className="w-full h-full object-contain rounded-lg" />
+            </div>
+
+            <div className="flex-1 text-center sm:text-left space-y-2">
+              <div className="flex items-center justify-center sm:justify-start gap-1.5">
+                <QrCode className="w-5 h-5 text-[#E05A2B]" />
+                <h3 className="font-bold text-base text-stone-900">QR Code de Comptoir & Table</h3>
+              </div>
+              <p className="text-xs text-stone-500 leading-relaxed">
+                Faites scanner ce code à vos clients pour ouvrir directement votre menu en ligne sur leur téléphone sans installer d'application.
+              </p>
+              <div className="pt-2">
+                <a
+                  href={qrCodeUrl}
+                  download={`qrcode_${shopName.replace(/\s+/g, '_')}.png`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5 text-[#E05A2B]" />
+                  Télécharger pour impression
+                </a>
+              </div>
+            </div>
+          </div>
+
+          {/* Formulaire Paramètres */}
           <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
             <h2 className="font-bold text-base text-stone-900 mb-2 flex items-center gap-2">
-              <Settings className="w-5 h-5 text-[#E05A2B]" /> Personnalisation de la Boutique
+              <Settings className="w-5 h-5 text-[#E05A2B]" /> Identité & Coordonnées
             </h2>
             <p className="text-xs text-stone-500 mb-6">
               Ajustez l'identité, le numéro WhatsApp récepteur et la devise visible par vos clients.
