@@ -19,7 +19,10 @@ import {
   Camera,
   Settings,
   Save,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Download,
+  ToggleLeft,
+  ToggleRight
 } from 'lucide-react';
 
 const SHOP_ID = process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID || '00000000-0000-0000-0000-000000000001';
@@ -36,7 +39,7 @@ export default function AdminPage() {
   const [salesHistory, setSalesHistory] = useState<Sale[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  // État Paramètres Boutique
+  // Paramètres Boutique
   const [shopName, setShopName] = useState('');
   const [shopTagline, setShopTagline] = useState('');
   const [shopPhone, setShopPhone] = useState('');
@@ -47,7 +50,7 @@ export default function AdminPage() {
   const [logoPreview, setLogoPreview] = useState<string>('');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
 
-  // Formulaire d'ajout produit
+  // Formulaire d'ajout
   const [newTitle, setNewTitle] = useState('');
   const [newPrice, setNewPrice] = useState('');
   const [newCategory, setNewCategory] = useState('');
@@ -106,7 +109,7 @@ export default function AdminPage() {
       const [prodRes, catRes, salesRes, shopRes] = await Promise.all([
         supabase.from('products').select('*').order('created_at', { ascending: false }),
         supabase.from('categories').select('*').order('sort_order', { ascending: true }),
-        supabase.from('sales').select('*').order('created_at', { ascending: false }).limit(20),
+        supabase.from('sales').select('*').order('created_at', { ascending: false }).limit(50),
         supabase.from('shops').select('*').eq('id', SHOP_ID).single()
       ]);
 
@@ -134,6 +137,64 @@ export default function AdminPage() {
     }
   };
 
+  // Basculer la disponibilité (Rupture de stock)
+  const toggleProductAvailability = async (productId: string, currentStatus: boolean) => {
+    try {
+      const nextStatus = !currentStatus;
+      const { error } = await supabase
+        .from('products')
+        .update({ is_available: nextStatus })
+        .eq('id', productId);
+
+      if (error) throw error;
+
+      setProducts((prev) =>
+        prev.map((p) => (p.id === productId ? { ...p, is_available: nextStatus } : p))
+      );
+    } catch (err) {
+      console.error('Erreur bascule stock:', err);
+      alert('Impossible de modifier la disponibilité.');
+    }
+  };
+
+  // Exporter les ventes en CSV
+  const exportSalesToCSV = () => {
+    if (salesHistory.length === 0) {
+      alert('Aucune vente enregistrée à exporter.');
+      return;
+    }
+
+    const headers = ['ID Vente', 'Date', 'Heure', 'Articles', 'Mode Paiement', 'Type Commande', `Montant Total (${shopCurrency})`];
+
+    const rows = salesHistory.map((s) => {
+      const dateObj = s.created_at ? new Date(s.created_at) : new Date();
+      const dateStr = dateObj.toLocaleDateString('fr-FR');
+      const timeStr = dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      const itemsList = s.items?.map((i) => `${i.title} (x${i.quantity})`).join(' | ') || '';
+
+      return [
+        `"${s.id}"`,
+        `"${dateStr}"`,
+        `"${timeStr}"`,
+        `"${itemsList.replace(/"/g, '""')}"`,
+        `"${s.payment_method}"`,
+        `"${s.order_type}"`,
+        s.total_amount
+      ];
+    });
+
+    const csvContent = '\uFEFF' + [headers.join(';'), ...rows.map((e) => e.join(';'))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `ventes_${shopName.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Caisse POS
   const addToPosCart = (product: Product) => {
     setPosCart((prev) => {
       const exists = prev.find((item) => item.product_id === product.id);
@@ -242,7 +303,6 @@ export default function AdminPage() {
     }
   };
 
-  // Mise à jour des paramètres boutique
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSavingSettings) return;
@@ -251,7 +311,6 @@ export default function AdminPage() {
       setIsSavingSettings(true);
       let finalLogoUrl = shopLogoUrl;
 
-      // Upload logo compressé si nouveau fichier
       if (logoFile) {
         const compressedLogo = await compressImage(logoFile, 400, 400, 0.85);
         const fileName = `logo-${Date.now()}.webp`;
@@ -301,7 +360,7 @@ export default function AdminPage() {
 
   const totalRevenue = salesHistory.reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
 
-  // Saisie du code PIN
+  // Saisie du PIN
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-[#FAF6F0] flex flex-col justify-center items-center p-4">
@@ -439,29 +498,42 @@ export default function AdminPage() {
                 <ShoppingCart className="w-5 h-5 text-[#E05A2B]" /> Encaisser un article
               </h2>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {products.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => addToPosCart(p)}
-                    className="p-3 text-left border border-stone-200 rounded-xl hover:border-stone-900 hover:bg-stone-50 transition-all flex flex-col justify-between h-24"
-                  >
-                    <span className="text-xs font-semibold line-clamp-2 text-stone-800">{p.title}</span>
-                    <span className="text-xs font-bold text-[#E05A2B]">
-                      {p.price.toLocaleString()} {shopCurrency}
-                    </span>
-                  </button>
-                ))}
+                {products
+                  .filter((p) => p.is_available)
+                  .map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => addToPosCart(p)}
+                      className="p-3 text-left border border-stone-200 rounded-xl hover:border-stone-900 hover:bg-stone-50 transition-all flex flex-col justify-between h-24"
+                    >
+                      <span className="text-xs font-semibold line-clamp-2 text-stone-800">{p.title}</span>
+                      <span className="text-xs font-bold text-[#E05A2B]">
+                        {p.price.toLocaleString()} {shopCurrency}
+                      </span>
+                    </button>
+                  ))}
               </div>
             </div>
 
+            {/* Historique avec Export CSV */}
             <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold text-sm text-stone-900 flex items-center gap-2">
-                  <DollarSign className="w-4 h-4 text-emerald-600" /> Ventes en base ({salesHistory.length})
-                </h3>
-                <span className="text-xs bg-emerald-50 text-emerald-700 px-2 py-1 rounded-md font-bold">
-                  Total : {totalRevenue.toLocaleString()} {shopCurrency}
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                <div>
+                  <h3 className="font-bold text-sm text-stone-900 flex items-center gap-2">
+                    <DollarSign className="w-4 h-4 text-emerald-600" /> Ventes ({salesHistory.length})
+                  </h3>
+                  <span className="text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md font-bold mt-1 inline-block">
+                    Total : {totalRevenue.toLocaleString()} {shopCurrency}
+                  </span>
+                </div>
+
+                <button
+                  onClick={exportSalesToCSV}
+                  className="flex items-center gap-1.5 bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold px-3 py-1.5 rounded-xl shadow-sm transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5 text-[#E05A2B]" />
+                  Exporter en CSV (Excel)
+                </button>
               </div>
 
               <div className="divide-y divide-stone-100 max-h-64 overflow-y-auto">
@@ -571,7 +643,7 @@ export default function AdminPage() {
         </main>
       )}
 
-      {/* Onglet 2 : Menu & Ajout */}
+      {/* Onglet 2 : Menu & Rupture de stock */}
       {activeTab === 'products' && (
         <main className="max-w-4xl mx-auto px-4 py-6">
           <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm mb-6">
@@ -675,20 +747,56 @@ export default function AdminPage() {
             </form>
           </div>
 
+          {/* Liste des plats avec Toggle Disponibilité */}
           <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
             <h3 className="font-bold text-sm text-stone-900 mb-3 flex items-center gap-2">
-              <Package className="w-4 h-4 text-stone-500" /> Plats enregistrés en base ({products.length})
+              <Package className="w-4 h-4 text-stone-500" /> Gestion des plats & Disponibilité ({products.length})
             </h3>
             <div className="divide-y divide-stone-100">
               {products.map((p) => (
-                <div key={p.id} className="py-3 flex items-center justify-between text-xs">
-                  <div>
-                    <span className="font-bold text-stone-900 text-sm">{p.title}</span>
-                    <p className="text-stone-500">{p.description}</p>
+                <div key={p.id} className="py-3 flex items-center justify-between gap-4 text-xs">
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={p.image_url || 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=600&q=80'}
+                      alt={p.title}
+                      className="w-11 h-11 rounded-xl object-cover border border-stone-200"
+                    />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`font-bold text-sm ${p.is_available ? 'text-stone-900' : 'text-stone-400 line-through'}`}>
+                          {p.title}
+                        </span>
+                        {!p.is_available && (
+                          <span className="bg-red-50 text-red-600 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                            Rupture
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-extrabold text-[#E05A2B]">
+                        {p.price.toLocaleString()} {shopCurrency}
+                      </span>
+                    </div>
                   </div>
-                  <span className="font-extrabold text-[#E05A2B] text-sm whitespace-nowrap">
-                    {p.price.toLocaleString()} {shopCurrency}
-                  </span>
+
+                  {/* Bouton Toggle Disponibilité */}
+                  <button
+                    onClick={() => toggleProductAvailability(p.id, p.is_available)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all ${
+                      p.is_available
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                        : 'bg-stone-50 border-stone-200 text-stone-500 hover:bg-stone-100'
+                    }`}
+                  >
+                    {p.is_available ? (
+                      <>
+                        <ToggleRight className="w-5 h-5 text-emerald-600" /> En vente
+                      </>
+                    ) : (
+                      <>
+                        <ToggleLeft className="w-5 h-5 text-stone-400" /> Épuisé
+                      </>
+                    )}
+                  </button>
                 </div>
               ))}
             </div>
@@ -696,7 +804,7 @@ export default function AdminPage() {
         </main>
       )}
 
-      {/* Onglet 3 : Paramètres Boutique (Personnalisation) */}
+      {/* Onglet 3 : Paramètres Boutique */}
       {activeTab === 'settings' && (
         <main className="max-w-2xl mx-auto px-4 py-6">
           <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
@@ -708,7 +816,6 @@ export default function AdminPage() {
             </p>
 
             <form onSubmit={handleSaveSettings} className="space-y-4 text-xs">
-              {/* Logo */}
               <div>
                 <label className="font-semibold text-stone-700 block mb-1">Logo de l'établissement</label>
                 <div className="flex items-center gap-4">
@@ -744,7 +851,6 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              {/* Nom & Slogan */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="font-semibold text-stone-700 block mb-1">Nom commercial</label>
@@ -769,7 +875,6 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              {/* Numéro WhatsApp & Devise */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="font-semibold text-stone-700 block mb-1">Numéro WhatsApp (avec indicatif)</label>
@@ -796,7 +901,6 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              {/* Adresse */}
               <div>
                 <label className="font-semibold text-stone-700 block mb-1">Adresse physique</label>
                 <input
