@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { SHOP_INFO } from '@/lib/data';
+import { compressImage } from '@/lib/compressImage';
 import { Product, Category, Sale, SaleItem } from '@/types';
 import {
   PlusCircle,
@@ -15,7 +16,8 @@ import {
   Loader2,
   Lock,
   LogOut,
-  Delete
+  Delete,
+  Camera
 } from 'lucide-react';
 
 const SHOP_ID = process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID || '00000000-0000-0000-0000-000000000001';
@@ -32,21 +34,21 @@ export default function AdminPage() {
   const [salesHistory, setSalesHistory] = useState<Sale[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  // Formulaire produit
+  // Formulaire d'ajout
   const [newTitle, setNewTitle] = useState('');
   const [newPrice, setNewPrice] = useState('');
   const [newCategory, setNewCategory] = useState('');
   const [newDesc, setNewDesc] = useState('');
-  const [newImage, setNewImage] = useState('');
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string>('');
   const [isSubmittingProduct, setIsSubmittingProduct] = useState(false);
 
-  // Ticket caisse
+  // Caisse POS
   const [posCart, setPosCart] = useState<SaleItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<'especes' | 'wave' | 'orange_money'>('wave');
   const [orderType, setOrderType] = useState<'sur_place' | 'a_emporter' | 'livraison'>('sur_place');
   const [isSubmittingSale, setIsSubmittingSale] = useState(false);
 
-  // Vérifier la session locale au chargement
   useEffect(() => {
     const savedAuth = sessionStorage.getItem('admin_authenticated');
     if (savedAuth === 'true') {
@@ -55,7 +57,6 @@ export default function AdminPage() {
     }
   }, []);
 
-  // Gestion du PIN
   const handlePinPress = (digit: string) => {
     if (pinInput.length < 4) {
       const nextPin = pinInput + digit;
@@ -86,7 +87,6 @@ export default function AdminPage() {
     setPinInput('');
   };
 
-  // Chargement des données
   const loadData = async () => {
     try {
       setIsLoading(true);
@@ -111,7 +111,6 @@ export default function AdminPage() {
     }
   };
 
-  // Caisse
   const addToPosCart = (product: Product) => {
     setPosCart((prev) => {
       const exists = prev.find((item) => item.product_id === product.id);
@@ -154,7 +153,7 @@ export default function AdminPage() {
       alert('Vente enregistrée avec succès !');
     } catch (err) {
       console.error('Erreur vente:', err);
-      alert('Erreur lors de l\'enregistrement.');
+      alert('Erreur lors de l\'enregistrement de la vente.');
     } finally {
       setIsSubmittingSale(false);
     }
@@ -166,13 +165,37 @@ export default function AdminPage() {
 
     try {
       setIsSubmittingProduct(true);
+      let finalImageUrl = 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=600&q=80';
+
+      // Compression et upload si une photo a été choisie
+      if (imageFile) {
+        const compressedBlob = await compressImage(imageFile, 800, 800, 0.75);
+        const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}.webp`;
+        const filePath = `items/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('products')
+          .upload(filePath, compressedBlob, {
+            contentType: 'image/webp',
+            cacheControl: '3600'
+          });
+
+        if (uploadError) throw uploadError;
+
+        const { data: publicUrlData } = supabase.storage
+          .from('products')
+          .getPublicUrl(filePath);
+
+        finalImageUrl = publicUrlData.publicUrl;
+      }
+
       const productPayload = {
         shop_id: SHOP_ID,
         category_id: newCategory || categories[0]?.id || 'patisserie',
         title: newTitle,
         description: newDesc || 'Préparation artisanale du jour.',
         price: Number(newPrice),
-        image_url: newImage || 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=600&q=80',
+        image_url: finalImageUrl,
         is_available: true
       };
 
@@ -186,10 +209,11 @@ export default function AdminPage() {
       setNewTitle('');
       setNewPrice('');
       setNewDesc('');
-      setNewImage('');
+      setImageFile(null);
+      setImagePreview('');
       alert('Nouveau plat publié au menu !');
     } catch (err) {
-      console.error('Erreur produit:', err);
+      console.error('Erreur ajout produit:', err);
       alert('Échec de la publication.');
     } finally {
       setIsSubmittingProduct(false);
@@ -198,7 +222,7 @@ export default function AdminPage() {
 
   const totalRevenue = salesHistory.reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
 
-  // Écran de saisie du PIN
+  // Saisie du code PIN
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-[#FAF6F0] flex flex-col justify-center items-center p-4">
@@ -210,7 +234,6 @@ export default function AdminPage() {
           <h2 className="text-lg font-bold text-stone-900">Espace Gérant</h2>
           <p className="text-xs text-stone-500 mb-6">Saisissez le code PIN pour déverrouiller</p>
 
-          {/* Indicateurs 4 ronds */}
           <div className="flex justify-center gap-3 mb-6">
             {[0, 1, 2, 3].map((index) => (
               <div
@@ -226,7 +249,6 @@ export default function AdminPage() {
             ))}
           </div>
 
-          {/* Pavé numérique tactile */}
           <div className="grid grid-cols-3 gap-3 mb-4">
             {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
               <button
@@ -252,10 +274,7 @@ export default function AdminPage() {
             </button>
           </div>
 
-          <Link
-            href="/"
-            className="text-xs text-stone-500 hover:text-stone-900 block mt-2"
-          >
+          <Link href="/" className="text-xs text-stone-500 hover:text-stone-900 block mt-2">
             ← Retour à la vitrine
           </Link>
         </div>
@@ -263,7 +282,6 @@ export default function AdminPage() {
     );
   }
 
-  // Écran de chargement
   if (isLoading) {
     return (
       <div className="min-h-screen bg-stone-100 flex items-center justify-center gap-2 text-stone-500">
@@ -273,7 +291,6 @@ export default function AdminPage() {
     );
   }
 
-  // Dashboard complet
   return (
     <div className="min-h-screen bg-stone-100 text-stone-800 pb-16">
       {/* Header */}
@@ -320,7 +337,7 @@ export default function AdminPage() {
         </div>
       </header>
 
-      {/* Caisse */}
+      {/* Caisse POS */}
       {activeTab === 'sales' && (
         <main className="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-4">
@@ -461,12 +478,12 @@ export default function AdminPage() {
         </main>
       )}
 
-      {/* Menu & Ajout */}
+      {/* Menu & Ajout avec Photo et Compression */}
       {activeTab === 'products' && (
         <main className="max-w-4xl mx-auto px-4 py-6">
           <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm mb-6">
             <h2 className="font-bold text-base text-stone-900 mb-4 flex items-center gap-2">
-              <PlusCircle className="w-5 h-5 text-[#E05A2B]" /> Ajouter un plat / gâteau en base
+              <PlusCircle className="w-5 h-5 text-[#E05A2B]" /> Ajouter un plat / gâteau avec photo
             </h2>
 
             <form onSubmit={handleAddProduct} className="space-y-4 text-xs">
@@ -510,15 +527,36 @@ export default function AdminPage() {
                     ))}
                   </select>
                 </div>
+
                 <div>
-                  <label className="font-semibold text-stone-700 block mb-1">URL Photo (optionnel)</label>
-                  <input
-                    type="url"
-                    placeholder="https://images.unsplash.com/..."
-                    value={newImage}
-                    onChange={(e) => setNewImage(e.target.value)}
-                    className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#E05A2B]"
-                  />
+                  <label className="font-semibold text-stone-700 block mb-1">Photo du plat (compressée auto)</label>
+                  <div className="flex items-center gap-3">
+                    <label className="flex-1 flex items-center justify-center gap-2 border-2 border-dashed border-stone-300 hover:border-stone-400 bg-stone-50 rounded-xl py-2 px-3 cursor-pointer text-stone-600 transition-colors">
+                      <Camera className="w-4 h-4 text-stone-500" />
+                      <span className="text-xs font-medium truncate">
+                        {imageFile ? imageFile.name : 'Prendre / Choisir photo'}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            setImageFile(file);
+                            setImagePreview(URL.createObjectURL(file));
+                          }
+                        }}
+                      />
+                    </label>
+                    {imagePreview && (
+                      <img
+                        src={imagePreview}
+                        alt="Aperçu"
+                        className="w-10 h-10 rounded-lg object-cover border border-stone-200"
+                      />
+                    )}
+                  </div>
                 </div>
               </div>
 
