@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { SHOP_INFO } from '@/lib/data';
 import { compressImage } from '@/lib/compressImage';
 import { Product, Category, Sale, SaleItem } from '@/types';
 import {
@@ -17,7 +16,10 @@ import {
   Lock,
   LogOut,
   Delete,
-  Camera
+  Camera,
+  Settings,
+  Save,
+  Image as ImageIcon
 } from 'lucide-react';
 
 const SHOP_ID = process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID || '00000000-0000-0000-0000-000000000001';
@@ -28,13 +30,24 @@ export default function AdminPage() {
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<boolean>(false);
 
-  const [activeTab, setActiveTab] = useState<'sales' | 'products'>('sales');
+  const [activeTab, setActiveTab] = useState<'sales' | 'products' | 'settings'>('sales');
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [salesHistory, setSalesHistory] = useState<Sale[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  // Formulaire d'ajout
+  // État Paramètres Boutique
+  const [shopName, setShopName] = useState('');
+  const [shopTagline, setShopTagline] = useState('');
+  const [shopPhone, setShopPhone] = useState('');
+  const [shopCurrency, setShopCurrency] = useState('FCFA');
+  const [shopAddress, setShopAddress] = useState('');
+  const [shopLogoUrl, setShopLogoUrl] = useState('');
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string>('');
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+
+  // Formulaire d'ajout produit
   const [newTitle, setNewTitle] = useState('');
   const [newPrice, setNewPrice] = useState('');
   const [newCategory, setNewCategory] = useState('');
@@ -90,10 +103,11 @@ export default function AdminPage() {
   const loadData = async () => {
     try {
       setIsLoading(true);
-      const [prodRes, catRes, salesRes] = await Promise.all([
+      const [prodRes, catRes, salesRes, shopRes] = await Promise.all([
         supabase.from('products').select('*').order('created_at', { ascending: false }),
         supabase.from('categories').select('*').order('sort_order', { ascending: true }),
-        supabase.from('sales').select('*').order('created_at', { ascending: false }).limit(20)
+        supabase.from('sales').select('*').order('created_at', { ascending: false }).limit(20),
+        supabase.from('shops').select('*').eq('id', SHOP_ID).single()
       ]);
 
       if (prodRes.data) setProducts(prodRes.data as Product[]);
@@ -104,6 +118,15 @@ export default function AdminPage() {
         }
       }
       if (salesRes.data) setSalesHistory(salesRes.data as Sale[]);
+
+      if (shopRes.data) {
+        setShopName(shopRes.data.name || '');
+        setShopTagline(shopRes.data.tagline || '');
+        setShopPhone(shopRes.data.whatsapp_number || '');
+        setShopCurrency(shopRes.data.currency || 'FCFA');
+        setShopAddress(shopRes.data.address || '');
+        setShopLogoUrl(shopRes.data.logo_url || '');
+      }
     } catch (err) {
       console.error('Erreur chargement admin:', err);
     } finally {
@@ -167,7 +190,6 @@ export default function AdminPage() {
       setIsSubmittingProduct(true);
       let finalImageUrl = 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=600&q=80';
 
-      // Compression et upload si une photo a été choisie
       if (imageFile) {
         const compressedBlob = await compressImage(imageFile, 800, 800, 0.75);
         const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}.webp`;
@@ -217,6 +239,63 @@ export default function AdminPage() {
       alert('Échec de la publication.');
     } finally {
       setIsSubmittingProduct(false);
+    }
+  };
+
+  // Mise à jour des paramètres boutique
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSavingSettings) return;
+
+    try {
+      setIsSavingSettings(true);
+      let finalLogoUrl = shopLogoUrl;
+
+      // Upload logo compressé si nouveau fichier
+      if (logoFile) {
+        const compressedLogo = await compressImage(logoFile, 400, 400, 0.85);
+        const fileName = `logo-${Date.now()}.webp`;
+        const filePath = `branding/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('products')
+          .upload(filePath, compressedLogo, {
+            contentType: 'image/webp',
+            cacheControl: '3600'
+          });
+
+        if (uploadError) throw uploadError;
+
+        const { data: publicUrlData } = supabase.storage
+          .from('products')
+          .getPublicUrl(filePath);
+
+        finalLogoUrl = publicUrlData.publicUrl;
+        setShopLogoUrl(finalLogoUrl);
+      }
+
+      const { error } = await supabase
+        .from('shops')
+        .update({
+          name: shopName,
+          tagline: shopTagline,
+          whatsapp_number: shopPhone,
+          currency: shopCurrency,
+          address: shopAddress,
+          logo_url: finalLogoUrl
+        })
+        .eq('id', SHOP_ID);
+
+      if (error) throw error;
+
+      alert('Paramètres de la boutique mis à jour avec succès !');
+      setLogoFile(null);
+      setLogoPreview('');
+    } catch (err) {
+      console.error('Erreur mise à jour paramètres:', err);
+      alert('Erreur lors de la sauvegarde des paramètres.');
+    } finally {
+      setIsSavingSettings(false);
     }
   };
 
@@ -303,13 +382,18 @@ export default function AdminPage() {
             >
               <ArrowLeft className="w-4 h-4" /> Vitrine
             </Link>
-            <div>
-              <h1 className="text-base sm:text-lg font-bold text-stone-900">Espace Gérant</h1>
-              <p className="text-xs text-stone-500">{SHOP_INFO.name}</p>
+            <div className="flex items-center gap-2">
+              {shopLogoUrl && (
+                <img src={shopLogoUrl} alt="Logo" className="w-8 h-8 rounded-full object-cover border" />
+              )}
+              <div>
+                <h1 className="text-base sm:text-lg font-bold text-stone-900">{shopName || 'Espace Gérant'}</h1>
+                <p className="text-xs text-stone-500">{shopTagline || 'Administration'}</p>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
             <button
               onClick={() => setActiveTab('sales')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
@@ -327,6 +411,15 @@ export default function AdminPage() {
               Menu
             </button>
             <button
+              onClick={() => setActiveTab('settings')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                activeTab === 'settings' ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-600'
+              }`}
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Paramètres</span>
+            </button>
+            <button
               onClick={handleLogout}
               title="Verrouiller"
               className="p-1.5 text-stone-400 hover:text-red-600 rounded-lg ml-1"
@@ -337,7 +430,7 @@ export default function AdminPage() {
         </div>
       </header>
 
-      {/* Caisse POS */}
+      {/* Onglet 1 : Caisse POS */}
       {activeTab === 'sales' && (
         <main className="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-4">
@@ -354,7 +447,7 @@ export default function AdminPage() {
                   >
                     <span className="text-xs font-semibold line-clamp-2 text-stone-800">{p.title}</span>
                     <span className="text-xs font-bold text-[#E05A2B]">
-                      {p.price.toLocaleString()} {SHOP_INFO.currency}
+                      {p.price.toLocaleString()} {shopCurrency}
                     </span>
                   </button>
                 ))}
@@ -367,7 +460,7 @@ export default function AdminPage() {
                   <DollarSign className="w-4 h-4 text-emerald-600" /> Ventes en base ({salesHistory.length})
                 </h3>
                 <span className="text-xs bg-emerald-50 text-emerald-700 px-2 py-1 rounded-md font-bold">
-                  Total : {totalRevenue.toLocaleString()} {SHOP_INFO.currency}
+                  Total : {totalRevenue.toLocaleString()} {shopCurrency}
                 </span>
               </div>
 
@@ -386,7 +479,7 @@ export default function AdminPage() {
                         </span>
                       </div>
                       <span className="font-bold text-stone-900 text-sm">
-                        {Number(s.total_amount).toLocaleString()} {SHOP_INFO.currency}
+                        {Number(s.total_amount).toLocaleString()} {shopCurrency}
                       </span>
                     </div>
                   ))
@@ -462,7 +555,7 @@ export default function AdminPage() {
               <div className="flex justify-between items-center mb-3">
                 <span className="text-xs text-stone-500">Total à encaisser</span>
                 <span className="text-lg font-black text-stone-900">
-                  {posTotal.toLocaleString()} {SHOP_INFO.currency}
+                  {posTotal.toLocaleString()} {shopCurrency}
                 </span>
               </div>
               <button
@@ -478,7 +571,7 @@ export default function AdminPage() {
         </main>
       )}
 
-      {/* Menu & Ajout avec Photo et Compression */}
+      {/* Onglet 2 : Menu & Ajout */}
       {activeTab === 'products' && (
         <main className="max-w-4xl mx-auto px-4 py-6">
           <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm mb-6">
@@ -500,7 +593,7 @@ export default function AdminPage() {
                   />
                 </div>
                 <div>
-                  <label className="font-semibold text-stone-700 block mb-1">Prix ({SHOP_INFO.currency})</label>
+                  <label className="font-semibold text-stone-700 block mb-1">Prix ({shopCurrency})</label>
                   <input
                     type="number"
                     required
@@ -529,7 +622,7 @@ export default function AdminPage() {
                 </div>
 
                 <div>
-                  <label className="font-semibold text-stone-700 block mb-1">Photo du plat (compressée auto)</label>
+                  <label className="font-semibold text-stone-700 block mb-1">Photo du plat (optimisée auto)</label>
                   <div className="flex items-center gap-3">
                     <label className="flex-1 flex items-center justify-center gap-2 border-2 border-dashed border-stone-300 hover:border-stone-400 bg-stone-50 rounded-xl py-2 px-3 cursor-pointer text-stone-600 transition-colors">
                       <Camera className="w-4 h-4 text-stone-500" />
@@ -594,11 +687,138 @@ export default function AdminPage() {
                     <p className="text-stone-500">{p.description}</p>
                   </div>
                   <span className="font-extrabold text-[#E05A2B] text-sm whitespace-nowrap">
-                    {p.price.toLocaleString()} {SHOP_INFO.currency}
+                    {p.price.toLocaleString()} {shopCurrency}
                   </span>
                 </div>
               ))}
             </div>
+          </div>
+        </main>
+      )}
+
+      {/* Onglet 3 : Paramètres Boutique (Personnalisation) */}
+      {activeTab === 'settings' && (
+        <main className="max-w-2xl mx-auto px-4 py-6">
+          <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
+            <h2 className="font-bold text-base text-stone-900 mb-2 flex items-center gap-2">
+              <Settings className="w-5 h-5 text-[#E05A2B]" /> Personnalisation de la Boutique
+            </h2>
+            <p className="text-xs text-stone-500 mb-6">
+              Ajustez l'identité, le numéro WhatsApp récepteur et la devise visible par vos clients.
+            </p>
+
+            <form onSubmit={handleSaveSettings} className="space-y-4 text-xs">
+              {/* Logo */}
+              <div>
+                <label className="font-semibold text-stone-700 block mb-1">Logo de l'établissement</label>
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl border border-stone-200 bg-stone-50 flex items-center justify-center overflow-hidden flex-shrink-0">
+                    {logoPreview || shopLogoUrl ? (
+                      <img
+                        src={logoPreview || shopLogoUrl}
+                        alt="Logo"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <ImageIcon className="w-6 h-6 text-stone-400" />
+                    )}
+                  </div>
+                  <label className="flex-1 flex items-center justify-center gap-2 border-2 border-dashed border-stone-300 hover:border-stone-400 bg-stone-50 rounded-xl py-2.5 px-3 cursor-pointer text-stone-600 transition-colors">
+                    <Camera className="w-4 h-4 text-stone-500" />
+                    <span className="text-xs font-medium truncate">
+                      {logoFile ? logoFile.name : 'Changer le logo'}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setLogoFile(file);
+                          setLogoPreview(URL.createObjectURL(file));
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Nom & Slogan */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-semibold text-stone-700 block mb-1">Nom commercial</label>
+                  <input
+                    type="text"
+                    required
+                    value={shopName}
+                    onChange={(e) => setShopName(e.target.value)}
+                    placeholder="Ex: Pâtisserie Le Régal"
+                    className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#E05A2B]"
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-stone-700 block mb-1">Slogan ou sous-titre</label>
+                  <input
+                    type="text"
+                    value={shopTagline}
+                    onChange={(e) => setShopTagline(e.target.value)}
+                    placeholder="Ex: Saveurs artisanales & Brunch"
+                    className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#E05A2B]"
+                  />
+                </div>
+              </div>
+
+              {/* Numéro WhatsApp & Devise */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-semibold text-stone-700 block mb-1">Numéro WhatsApp (avec indicatif)</label>
+                  <input
+                    type="text"
+                    required
+                    value={shopPhone}
+                    onChange={(e) => setShopPhone(e.target.value)}
+                    placeholder="Ex: +221771234567"
+                    className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#E05A2B]"
+                  />
+                  <span className="text-[10px] text-stone-400 mt-0.5 block">Format international (+221...)</span>
+                </div>
+                <div>
+                  <label className="font-semibold text-stone-700 block mb-1">Devise affichée</label>
+                  <input
+                    type="text"
+                    required
+                    value={shopCurrency}
+                    onChange={(e) => setShopCurrency(e.target.value)}
+                    placeholder="Ex: FCFA, EUR, $"
+                    className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#E05A2B]"
+                  />
+                </div>
+              </div>
+
+              {/* Adresse */}
+              <div>
+                <label className="font-semibold text-stone-700 block mb-1">Adresse physique</label>
+                <input
+                  type="text"
+                  value={shopAddress}
+                  onChange={(e) => setShopAddress(e.target.value)}
+                  placeholder="Ex: Sacré-Cœur 3, Dakar"
+                  className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#E05A2B]"
+                />
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={isSavingSettings}
+                  className="w-full bg-[#E05A2B] hover:bg-[#c94d22] disabled:bg-stone-300 text-white py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-colors"
+                >
+                  {isSavingSettings ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Sauvegarder les modifications
+                </button>
+              </div>
+            </form>
           </div>
         </main>
       )}

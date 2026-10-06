@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { SHOP_INFO } from '@/lib/data';
 import { Product, Category, CartItem } from '@/types';
 import {
   ShoppingBag,
@@ -26,14 +25,32 @@ import {
   Moon
 } from 'lucide-react';
 
+const SHOP_ID = process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID || '00000000-0000-0000-0000-000000000001';
+
+interface ShopSettings {
+  name: string;
+  tagline: string;
+  whatsapp_number: string;
+  currency: string;
+  address: string;
+  logo_url?: string;
+}
+
 export default function Home() {
+  const [shop, setShop] = useState<ShopSettings>({
+    name: "L'Atelier Gourmand",
+    tagline: 'Pâtisserie Fine & Traiteur',
+    whatsapp_number: '+221770000000',
+    currency: 'FCFA',
+    address: 'Dakar, Sénégal'
+  });
+
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Gestion du Thème (Dark / Light)
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
 
   // Panier & Commande
@@ -43,7 +60,6 @@ export default function Home() {
   const [customerName, setCustomerName] = useState<string>('');
   const [customerAddress, setCustomerAddress] = useState<string>('');
 
-  // Récupérer le thème sauvegardé
   useEffect(() => {
     const savedTheme = localStorage.getItem('app_theme');
     if (savedTheme) {
@@ -63,9 +79,10 @@ export default function Home() {
     async function fetchData() {
       try {
         setIsLoading(true);
-        const [catRes, prodRes] = await Promise.all([
+        const [catRes, prodRes, shopRes] = await Promise.all([
           supabase.from('categories').select('*').order('sort_order', { ascending: true }),
-          supabase.from('products').select('*').eq('is_available', true).order('created_at', { ascending: false })
+          supabase.from('products').select('*').eq('is_available', true).order('created_at', { ascending: false }),
+          supabase.from('shops').select('*').eq('id', SHOP_ID).single()
         ]);
 
         if (catRes.data) {
@@ -73,6 +90,16 @@ export default function Home() {
         }
         if (prodRes.data) {
           setProducts(prodRes.data as Product[]);
+        }
+        if (shopRes.data) {
+          setShop({
+            name: shopRes.data.name || "L'Atelier Gourmand",
+            tagline: shopRes.data.tagline || 'Pâtisserie Fine & Traiteur',
+            whatsapp_number: shopRes.data.whatsapp_number || '+221770000000',
+            currency: shopRes.data.currency || 'FCFA',
+            address: shopRes.data.address || 'Dakar, Sénégal',
+            logo_url: shopRes.data.logo_url
+          });
         }
       } catch (err) {
         console.error('Erreur chargement vitrine:', err);
@@ -83,7 +110,6 @@ export default function Home() {
     fetchData();
   }, []);
 
-  // Filtrage combiné : catégorie + recherche
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
       const matchCategory = selectedCategory === 'all' || p.category_id === selectedCategory;
@@ -128,22 +154,23 @@ export default function Home() {
   const handleWhatsAppCheckout = () => {
     if (cart.length === 0) return;
 
-    let message = `*Nouvelle commande - ${SHOP_INFO.name}*\n\n`;
+    let message = `*Nouvelle commande - ${shop.name}*\n\n`;
     message += `👤 *Client* : ${customerName || 'Non renseigné'}\n`;
     message += `📍 *Mode* : ${deliveryType === 'livraison' ? `Livraison (${customerAddress || 'Adresse à préciser'})` : 'À emporter'}\n\n`;
     message += `*Articles commandés :*\n`;
 
     cart.forEach((item) => {
-      message += `• ${item.product.title} (x${item.quantity}) : ${(item.product.price * item.quantity).toLocaleString()} ${SHOP_INFO.currency}\n`;
+      message += `• ${item.product.title} (x${item.quantity}) : ${(item.product.price * item.quantity).toLocaleString()} ${shop.currency}\n`;
     });
 
     if (deliveryType === 'livraison') {
-      message += `• Frais de livraison : ${deliveryFee.toLocaleString()} ${SHOP_INFO.currency}\n`;
+      message += `• Frais de livraison : ${deliveryFee.toLocaleString()} ${shop.currency}\n`;
     }
 
-    message += `\n*TOTAL : ${grandTotal.toLocaleString()} ${SHOP_INFO.currency}*`;
+    message += `\n*TOTAL : ${grandTotal.toLocaleString()} ${shop.currency}*`;
 
-    window.open(`https://wa.me/${SHOP_INFO.phone}?text=${encodeURIComponent(message)}`, '_blank');
+    const cleanedPhone = shop.whatsapp_number.replace(/[^0-9+]/g, '');
+    window.open(`https://wa.me/${cleanedPhone}?text=${encodeURIComponent(message)}`, '_blank');
   };
 
   const getCategoryIcon = (catId: string) => {
@@ -167,7 +194,6 @@ export default function Home() {
         isDarkMode ? 'bg-[#0F0E0E] text-stone-100' : 'bg-[#F4F1EA] text-stone-900'
       }`}
     >
-      {/* Conteneur Mobile-First */}
       <div
         className={`w-full max-w-md min-h-screen flex flex-col border-x transition-colors duration-300 relative ${
           isDarkMode
@@ -191,7 +217,6 @@ export default function Home() {
               <Menu className="w-6 h-6" />
             </Link>
 
-            {/* Bouton Toggle Thème (Soleil / Lune) */}
             <button
               onClick={toggleTheme}
               aria-label="Changer de thème"
@@ -206,18 +231,22 @@ export default function Home() {
           </div>
 
           <div className="flex flex-col items-center">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-[#E05A2B] animate-pulse"></span>
+            <div className="flex items-center gap-2">
+              {shop.logo_url ? (
+                <img src={shop.logo_url} alt="Logo" className="w-6 h-6 rounded-full object-cover" />
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-[#E05A2B] animate-pulse"></span>
+              )}
               <h1
                 className={`font-extrabold tracking-widest text-base uppercase font-serif ${
                   isDarkMode ? 'text-stone-100' : 'text-stone-900'
                 }`}
               >
-                {SHOP_INFO.name}
+                {shop.name}
               </h1>
             </div>
             <p className={`text-[10px] tracking-[0.2em] uppercase font-medium ${isDarkMode ? 'text-stone-400' : 'text-stone-500'}`}>
-              Pâtisserie Fine & Traiteur
+              {shop.tagline}
             </p>
           </div>
 
@@ -257,14 +286,10 @@ export default function Home() {
           </div>
         </div>
 
-        {/* 3. Hero Card Gourmet */}
+        {/* 3. Hero Card */}
         <div className="px-5 py-3">
           <div
-            className={`relative overflow-hidden rounded-3xl border p-5 shadow-2xl transition-colors duration-300 ${
-              isDarkMode
-                ? 'bg-gradient-to-br from-stone-900 via-[#1C1817] to-stone-950 border-stone-800/80 text-white'
-                : 'bg-gradient-to-br from-stone-900 via-stone-800 to-stone-950 border-stone-800 text-white'
-            }`}
+            className="relative overflow-hidden rounded-3xl border border-stone-800/80 p-5 shadow-2xl bg-gradient-to-br from-stone-900 via-[#1C1817] to-stone-950 text-white"
           >
             <div className="absolute inset-0 z-0">
               <img
@@ -277,7 +302,7 @@ export default function Home() {
 
             <div className="relative z-10 max-w-[70%]">
               <span className="font-serif italic text-xs text-[#E05A2B] font-semibold tracking-wide">
-                Fait Maison & Pur Beurre
+                Fait Maison & Frais
               </span>
               <h2 className="text-xl font-black uppercase tracking-tight text-white mt-1 leading-snug">
                 Frais.<br />
@@ -285,7 +310,7 @@ export default function Home() {
                 <span className="text-[#E05A2B]">Inoubliable.</span>
               </h2>
               <p className="text-[11px] text-stone-300 mt-2 leading-relaxed">
-                Ingrédients nobles sélectionnés avec passion.
+                {shop.address ? `Retrouvez-nous à ${shop.address}` : 'Ingrédients nobles sélectionnés avec soin.'}
               </p>
 
               <button
@@ -307,7 +332,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* 4. Barre de Catégories avec icônes */}
+        {/* 4. Catégories */}
         <div className="py-4">
           <div className="flex items-center gap-4 overflow-x-auto px-5 scrollbar-none">
             {categories.map((cat) => {
@@ -415,7 +440,7 @@ export default function Home() {
                       }`}
                     >
                       <span className="font-extrabold text-xs text-[#E05A2B]">
-                        {product.price.toLocaleString()} {SHOP_INFO.currency}
+                        {product.price.toLocaleString()} {shop.currency}
                       </span>
                       <button
                         onClick={() => addToCart(product)}
@@ -449,7 +474,7 @@ export default function Home() {
                 <span className="text-xs uppercase tracking-wider font-extrabold">Voir mon panier</span>
               </div>
               <span className="text-sm font-black">
-                {subtotal.toLocaleString()} {SHOP_INFO.currency}
+                {subtotal.toLocaleString()} {shop.currency}
               </span>
             </button>
           </div>
@@ -505,7 +530,7 @@ export default function Home() {
                             {item.product.title}
                           </h4>
                           <span className="text-[11px] text-stone-400">
-                            {(item.product.price * item.quantity).toLocaleString()} {SHOP_INFO.currency}
+                            {(item.product.price * item.quantity).toLocaleString()} {shop.currency}
                           </span>
                         </div>
 
@@ -629,7 +654,7 @@ export default function Home() {
                   <div className="flex justify-between items-center mb-4">
                     <span className="text-xs text-stone-400">Total à payer</span>
                     <span className="text-lg font-black text-[#E05A2B]">
-                      {grandTotal.toLocaleString()} {SHOP_INFO.currency}
+                      {grandTotal.toLocaleString()} {shop.currency}
                     </span>
                   </div>
                   <button
